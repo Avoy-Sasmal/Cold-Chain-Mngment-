@@ -1,0 +1,15 @@
+node_modules/
+
+# Env Files
+.env
+
+# Foundry
+broadcast/
+cache/
+out/
+
+# Logs
+*.log
+
+# OS Files
+.DS_Store

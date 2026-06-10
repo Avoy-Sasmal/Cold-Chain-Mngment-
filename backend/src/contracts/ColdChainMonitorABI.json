@@ -1,0 +1,52 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      { "name": "_roleManager",  "type": "address" },
+      { "name": "_productBatch", "type": "address" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function", "name": "recordCondition",
+    "inputs": [
+      { "name": "_productHash",   "type": "bytes32" },
+      { "name": "_integrityHash", "type": "bytes32" }
+    ],
+    "outputs": [], "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function", "name": "getLatestHash",
+    "inputs": [{ "name": "_productHash", "type": "bytes32" }],
+    "outputs": [{ "name": "", "type": "bytes32" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function", "name": "getLogCount",
+    "inputs": [{ "name": "_productHash", "type": "bytes32" }],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function", "name": "latestIntegrityHash",
+    "inputs": [{ "name": "", "type": "bytes32" }],
+    "outputs": [{ "name": "", "type": "bytes32" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function", "name": "logCount",
+    "inputs": [{ "name": "", "type": "bytes32" }],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event", "name": "ConditionLogged",
+    "inputs": [
+      { "name": "productHash",   "type": "bytes32", "indexed": true  },
+      { "name": "integrityHash", "type": "bytes32", "indexed": false },
+      { "name": "loggedBy",      "type": "address", "indexed": true  },
+      { "name": "timestamp",     "type": "uint256", "indexed": false }
+    ],
+    "anonymous": false
+  }
+]

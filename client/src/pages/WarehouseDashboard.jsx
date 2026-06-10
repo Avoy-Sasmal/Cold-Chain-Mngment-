@@ -1,0 +1,236 @@
+import { useState, useEffect } from "react";
+import { useWallet } from "../context/WalletContext";
+import useContract from "../hooks/useContract";
+import TransactionToast, { useTxToast } from "../components/TransactionToast";
+import ProductCard from "../components/ProductCard";
+import {
+  TabBar, DashboardHeader, Card, SectionTitle, EmptyState, Spinner,
+  SubmitBtn, ConnectGate, AccessDenied, RefreshBtn, LogEntry,
+  ProductSelectItem, WalletInput,
+} from "../components/DashboardShell";
+import { getOwnerProducts } from "../services/productService";
+import { recordTransfer } from "../services/transferService";
+import { addLog, getLogs } from "../services/monitoringService";
+import { getStakeholder } from "../services/apiService";
+import { FiHome, FiActivity, FiSend, FiThermometer, FiPackage, FiCheckCircle } from "react-icons/fi";
+
+const TABS = ["Inventory", "Log Condition", "Transfer to Retailer"];
+const GRADIENT = "bg-gradient-to-br from-amber-500 to-orange-600";
+const ACCENT = "bg-amber-600";
+const FOCUS = "focus:border-amber-500/60";
+const BTN_GRADIENT = "from-amber-600 to-orange-600";
+const SELECT_ACCENT = "border-amber-500 bg-amber-500/10 text-amber-300";
+
+export default function WarehouseDashboard() {
+  const { account, roleName, isConnected, connect } = useWallet();
+  const { getProductBatch } = useContract();
+  const { toast, showPending, showSuccess, showError, clearToast } = useTxToast();
+
+  const [tab,        setTab]        = useState("Inventory");
+  const [products,   setProducts]   = useState([]);
+  const [selected,   setSelected]   = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [logs,       setLogs]       = useState([]);
+  const [toWallet,   setToWallet]   = useState("");
+  const [logForm,    setLogForm]    = useState({ temperature: "", location: "", sealStatus: "INTACT", notes: "" });
+
+  const load = async () => {
+    if (!account) return;
+    setLoading(true);
+    try { const r = await getOwnerProducts(account); setProducts(r.data || []); } catch {/**/}
+    setLoading(false);
+  };
+
+  useEffect(() => { if (isConnected) load(); }, [isConnected, account]);
+  useEffect(() => {
+    if (selected) getLogs(selected.batchId).then((r) => setLogs(r.data || [])).catch(() => setLogs([]));
+  }, [selected]);
+
+  const handleLog = async (e) => {
+    e.preventDefault();
+    if (!selected) return showError("Select a product");
+    setSubmitting(true);
+    try {
+      const res = await addLog({
+        ...logForm, batchId: selected.batchId,
+        productHash: selected.blockchainHash,
+        loggedByWallet: account, loggedByRole: "WAREHOUSE",
+      });
+      if (!res.data.isSafe) showError(`Alert: ${res.data.alertType}`);
+      else showSuccess("Condition logged!");
+      setLogForm({ temperature: "", location: "", sealStatus: "INTACT", notes: "" });
+      getLogs(selected.batchId).then((r) => setLogs(r.data || []));
+    } catch (err) { showError(err.message || "Failed"); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleTransfer = async (e) => {
+    e.preventDefault();
+    if (!selected) return showError("Select a product");
+    const normalizedTo = toWallet.trim();
+    setSubmitting(true);
+    try {
+      const rec = await getStakeholder(normalizedTo).catch(() => null);
+      if (!rec?.data || rec.data.role !== "RETAILER")
+        return showError("Recipient must be a registered Retailer");
+
+      showPending("Confirm in MetaMask…");
+      const contract = await getProductBatch();
+      const tx = await contract.transferProduct(selected.blockchainHash, normalizedTo);
+      const receipt = await tx.wait();
+      await recordTransfer({ batchId: selected.batchId, productHash: selected.blockchainHash, fromWallet: account, toWallet: normalizedTo, fromRole: "WAREHOUSE", toRole: "RETAILER", txHash: receipt.hash });
+      showSuccess("Transferred to Retailer!", receipt.hash);
+      setSelected(null); setToWallet(""); load();
+    } catch (err) {
+      showError(err?.revert?.args?.[0] || err?.reason || err?.message || "Transfer failed");
+    } finally { setSubmitting(false); }
+  };
+
+  if (!isConnected) return <ConnectGate connect={connect} title="Warehouse Dashboard" Icon={FiHome} gradientClass={GRADIENT} />;
+  if (roleName !== "WAREHOUSE") return <AccessDenied roleName={roleName} required="WAREHOUSE" />;
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white">
+      <div className="max-w-5xl mx-auto px-4 py-8">
+
+        <DashboardHeader
+          Icon={FiHome}
+          title="Warehouse Dashboard"
+          account={account}
+          gradientClass={GRADIENT}
+          badge={
+            <div className="hidden sm:flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-full px-3 py-1.5 text-amber-400 text-xs font-semibold">
+              <FiPackage className="w-3.5 h-3.5" />
+              {products.length} in Storage
+            </div>
+          }
+        />
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-gray-900/60 border border-white/8 rounded-xl p-4">
+            <p className="text-2xl font-bold text-white">{products.length}</p>
+            <p className="text-gray-500 text-xs mt-0.5">In Storage</p>
+          </div>
+          <div className="bg-gray-900/60 border border-white/8 rounded-xl p-4">
+            <p className="text-2xl font-bold text-white">{logs.filter(l => !l.isSafe).length}</p>
+            <p className="text-gray-500 text-xs mt-0.5">Active Alerts</p>
+          </div>
+        </div>
+
+        <TabBar tabs={TABS} active={tab} onChange={setTab} accentClass={ACCENT} />
+
+        {/* ── Inventory ── */}
+        {tab === "Inventory" && (
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <p className="text-gray-400 text-sm">{products.length} product(s) in storage</p>
+              <RefreshBtn onClick={load} loading={loading} />
+            </div>
+            {loading ? <Spinner color="border-t-amber-500" />
+              : products.length === 0
+                ? <EmptyState Icon={FiPackage} title="No products in storage" subtitle="Products will appear here when transferred to you" />
+                : <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {products.map((p) => <ProductCard key={p._id} product={p} onClick={() => setSelected(p)} />)}
+                  </div>
+            }
+          </div>
+        )}
+
+        {/* ── Log Condition ── */}
+        {tab === "Log Condition" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <SectionTitle Icon={FiThermometer}>Log Storage Condition</SectionTitle>
+
+              <div className="mb-4">
+                <label className="text-gray-400 text-xs font-medium block mb-2">Select Product</label>
+                <div className="space-y-2 max-h-36 overflow-y-auto">
+                  {products.map((p) => (
+                    <ProductSelectItem key={p._id} product={p} selected={selected}
+                      onClick={setSelected} accentColor={SELECT_ACCENT} />
+                  ))}
+                </div>
+              </div>
+
+              <form onSubmit={handleLog} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-gray-400 text-xs font-medium block mb-1.5">Temp (°C) *</label>
+                    <input type="number" step="0.1" value={logForm.temperature}
+                      onChange={(e) => setLogForm((f) => ({ ...f, temperature: e.target.value }))} required
+                      className={`w-full bg-gray-800/80 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none ${FOCUS} transition-colors`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-400 text-xs font-medium block mb-1.5">Seal</label>
+                    <select value={logForm.sealStatus} onChange={(e) => setLogForm((f) => ({ ...f, sealStatus: e.target.value }))}
+                      className={`w-full bg-gray-800/80 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none ${FOCUS} transition-colors`}>
+                      <option>INTACT</option><option>BROKEN</option><option>UNKNOWN</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs font-medium block mb-1.5">Location *</label>
+                  <input type="text" placeholder="Bay A-12" value={logForm.location}
+                    onChange={(e) => setLogForm((f) => ({ ...f, location: e.target.value }))} required
+                    className={`w-full bg-gray-800/80 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none ${FOCUS} transition-colors`}
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-400 text-xs font-medium block mb-1.5">Notes</label>
+                  <textarea rows={2} value={logForm.notes}
+                    onChange={(e) => setLogForm((f) => ({ ...f, notes: e.target.value }))}
+                    className={`w-full bg-gray-800/80 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none ${FOCUS} transition-colors resize-none`}
+                  />
+                </div>
+                <SubmitBtn submitting={submitting} gradientClass={BTN_GRADIENT} Icon={FiActivity} disabled={!selected}>
+                  Submit Log
+                </SubmitBtn>
+              </form>
+            </Card>
+
+            <Card>
+              <SectionTitle Icon={FiCheckCircle}>Recent Logs</SectionTitle>
+              {logs.length === 0
+                ? <div className="text-center py-8 text-gray-500 text-sm">Select a product to view logs.</div>
+                : <div className="space-y-2 max-h-80 overflow-y-auto">{logs.map((l) => <LogEntry key={l._id} log={l} />)}</div>
+              }
+            </Card>
+          </div>
+        )}
+
+        {/* ── Transfer to Retailer ── */}
+        {tab === "Transfer to Retailer" && (
+          <Card className="max-w-lg">
+            <SectionTitle Icon={FiSend}>Transfer to Retailer</SectionTitle>
+            {products.length === 0
+              ? <EmptyState Icon={FiPackage} title="No products to transfer" />
+              : <>
+                  <div className="mb-4">
+                    <label className="text-gray-400 text-xs font-medium block mb-2">Select Product</label>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {products.map((p) => (
+                        <ProductSelectItem key={p._id} product={p} selected={selected}
+                          onClick={setSelected} accentColor={SELECT_ACCENT} />
+                      ))}
+                    </div>
+                  </div>
+                  <form onSubmit={handleTransfer} className="space-y-4">
+                    <WalletInput label="Retailer Wallet Address" value={toWallet}
+                      onChange={(e) => setToWallet(e.target.value)} focusColor={FOCUS} />
+                    <SubmitBtn submitting={submitting} gradientClass={BTN_GRADIENT}
+                      Icon={FiSend} disabled={!selected}>
+                      Transfer to Retailer
+                    </SubmitBtn>
+                  </form>
+                </>
+            }
+          </Card>
+        )}
+      </div>
+      <TransactionToast {...toast} onClose={clearToast} />
+    </div>
+  );
+}
